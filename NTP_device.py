@@ -1,8 +1,6 @@
 import uasyncio as asyncio
 from machine import Timer, RTC
-import time
-import network
-import socket
+import time, network, socket
 from struct import unpack
 
 from lib_pico.wifi_connect import *
@@ -106,62 +104,6 @@ NTP_UDP_PORT = const(123)
 
 
 
-def get_ntp_time(era_offset=TIME_STAMP_UNIX, host="fr.pool.ntp.org"):
-    NTP_QUERY = bytearray(DATAGRAM_SIZE)
-    NTP_QUERY[0] = (SNTP_VERSION << 3 ) | CLIENT_MODE
-    addr = socket.getaddrinfo(host, NTP_UDP_PORT)[0][-1]
-    s = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
-    try:
-        s.settimeout(1)
-        res = s.sendto(NTP_QUERY, addr)
-        msg = s.recv(DATAGRAM_SIZE)
-#         msg = b'$\x02\x03\xe8\x00\x00\x02\x19\x00\x00\x01\xa9\x11\xfd\x0e\xfd\xe7\xbd\xcck\xe1\x02\x04H\x00\x00\x00\x00\x00\x00\x00\x00\xe7\xbd\xcd\x9a\xf1Y\xc0\xbb\xe7\xbd\xcd\x9a\xf1Z\xf6\x00'
-#         msg = b'\x1c\x01\x01\xea\x00\x00\x00\x01\x00\x00\x00\x01GPS\x00\xe7\xbd\xc1\xa8v\xaf\x1co\x00\x00\x00\x00\x00\x00\x00\x00\xe7\xbd\xc1\xb34i\x16\x1c\xe7\xbd\xc1\xb34q\xc5\xa2'
-#         print(msg)
-        Leap_Indicator = (msg[0] & 0xC0) >> 6
-        mode  = msg[0] & 7
-        if (Leap_Indicator == CLOCK_OUT_OF_SYNC) or (mode != SERVER_MODE) :
-            return None
-        Version = (msg[0] & 0x38) >> 3
-        stratum = msg[1]
-        poll_exponent = unpack("!b",msg[2:3])[0]
-        poll_interval = 2** poll_exponent
-        precision_exponent = unpack("!b",msg[3:4])[0]
-        precision = 2**precision_exponent
-        root_delay = unpack("!hH",msg[4:8])
-        root_dispersion = unpack("!hH",msg[8:12])
-        if stratum == 0:
-            ref_identifier = f"KoD msg:{msg[12:16].decode('ascii')}"
-        elif stratum == 1:
-            ref_identifier = f"source type:{msg[12:16].decode('ascii')}"
-        else:
-            ip = list(msg[12:16])
-            ref_identifier = f"source IP: {ip[0]}.{ip[1]}.{ip[2]}.{ip[3]}"
-        ref_timestamp = unpack("!II",msg[16:24])
-        origine_timestamp = unpack("!II",msg[24:32])
-        receive_timestamp =  unpack("!II",msg[32:40])
-        transmit_timestamp = unpack("!II",msg[40:48])
-        if __name__ == "__main__":
-            print("NTP server host_addr:",addr)
-            print("LI:",Leap_Indicator)
-            print("VN:",Version)
-            print("Mode:",mode)
-            print("Stratum:", stratum)
-            print(f"poll_interval: {poll_interval} seconds")
-            print(f"Precision: {precision} seconds")
-            print(f"Root delay: {root_delay[0]}.{root_delay[1]} seconds")
-            print(f"Root dispersion: {root_dispersion[0]}.{root_dispersion[1]} seconds",)
-            print(ref_identifier)
-            print(f"Ref TS: {ref_timestamp[0]}.{ref_timestamp[1]} seconds")
-            print(f"Origine TS: {origine_timestamp[0]}.{origine_timestamp[1]} seconds")
-            print(f"Receive TS: {receive_timestamp[0]}.{receive_timestamp[1]} seconds")
-            print(f"Transmit TS: {transmit_timestamp[0]}.{transmit_timestamp[1]} seconds")
-       
-    finally:
-        pass
-#         s.close()
-    current_utc_timestamp = transmit_timestamp[0] - era_offset
-    return current_utc_timestamp
 
 
 
@@ -171,7 +113,7 @@ class NTP_device():
         self.time_zone = time_zone
         self.rtc = RTC()
         self.time_validity = wifi_connect()
-        current_utc_timestamp = get_ntp_time()
+        current_utc_timestamp = self.get_ntp_time()
         if current_utc_timestamp is not None:
             local_time = time.localtime(current_utc_timestamp)
         else:
@@ -179,7 +121,61 @@ class NTP_device():
         # time.localtime = ([0]year, [1]month, [2]mday, [3]hour, [4]minute, [5]second, [6]weekday, [7]yearday)
         # RTC.datetime = ([0]year, [1]month, [2]day, [3]weekday, [4]hours, [5]minutes, [6]seconds, [7]subseconds)
         self.rtc.datetime((local_time[0], local_time[1], local_time[2], local_time[6], local_time[3], local_time[4], local_time[5], 0))
-        
+
+    def get_ntp_time(self, era_offset=TIME_STAMP_UNIX, host="fr.pool.ntp.org"):
+        NTP_QUERY = bytearray(DATAGRAM_SIZE)
+        NTP_QUERY[0] = (SNTP_VERSION << 3 ) | CLIENT_MODE
+        self.addr = socket.getaddrinfo(host, NTP_UDP_PORT)[0][-1]
+        s = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
+        try:
+            s.settimeout(1)
+            res = s.sendto(NTP_QUERY, self.addr)
+            msg = s.recv(DATAGRAM_SIZE)
+            self.Leap_Indicator = (msg[0] & 0xC0) >> 6
+            self.mode  = msg[0] & 7
+            if (self.Leap_Indicator == CLOCK_OUT_OF_SYNC) or (self.mode != SERVER_MODE) :
+                return None
+            self.Version = (msg[0] & 0x38) >> 3
+            self.stratum = msg[1]
+            poll_exponent = unpack("!b",msg[2:3])[0]
+            self.poll_interval = 2** poll_exponent
+            precision_exponent = unpack("!b",msg[3:4])[0]
+            self.precision = 2**precision_exponent
+            self.root_delay = unpack("!hH",msg[4:8])
+            self.root_dispersion = unpack("!hH",msg[8:12])
+            if self.stratum == 0:
+                self.ref_identifier = f"KoD msg:{msg[12:16].decode('ascii')}"
+            elif self.stratum == 1:
+                self.ref_identifier = f"source type:{msg[12:16].decode('ascii')}"
+            else:
+                ip = list(msg[12:16])
+                self.ref_identifier = f"Reference source IP:\n  {ip[0]}.{ip[1]}.{ip[2]}.{ip[3]}"
+            self.ref_timestamp = unpack("!II",msg[16:24])
+            self.origine_timestamp = unpack("!II",msg[24:32])
+            self.receive_timestamp =  unpack("!II",msg[32:40])
+            self.transmit_timestamp = unpack("!II",msg[40:48])
+            if __name__ == "__main__":
+                print(f"NTP server host_addr:{self.addr}")
+                print(f"LI: {self.Leap_Indicator}")
+                print(f"VN:{self.Version}")
+                print(f"Mode: {self.mode}")
+                print(f"Stratum: {self.stratum}")
+                print(f"poll_interval: {self.poll_interval} seconds")
+                print(f"Precision: {self.precision} seconds")
+                print(f"Root delay: {self.root_delay[0]}.{self.root_delay[1]} seconds")
+                print(f"Root dispersion: {self.root_dispersion[0]}.{self.root_dispersion[1]} seconds")
+                print(self.ref_identifier)
+                print(f"Ref TS: {self.ref_timestamp[0]}.{self.ref_timestamp[1]} seconds")
+                print(f"Origine TS: {self.origine_timestamp[0]}.{self.origine_timestamp[1]} seconds")
+                print(f"Receive TS: {self.receive_timestamp[0]}.{self.receive_timestamp[1]} seconds")
+                print(f"Transmit TS: {self.transmit_timestamp[0]}.{self.transmit_timestamp[1]} seconds")
+           
+        finally:
+            pass
+    #         s.close()
+        current_utc_timestamp = self.transmit_timestamp[0] - era_offset
+        return current_utc_timestamp
+
     
     def next_second(self):
         pass
@@ -224,8 +220,8 @@ if __name__ == "__main__":
             D0.on()
             one_second_time_event.clear()
             ntp.next_second()
-#             print("\t", ntp.get_local_time())
-#             print(ntp.get_status())
+            print("\t", ntp.get_local_time())
+            print(ntp.get_status())
 
     Timer(mode=Timer.PERIODIC, freq=1, callback=timer_IRQ)
     one_second_time_event = asyncio.ThreadSafeFlag()

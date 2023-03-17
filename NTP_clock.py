@@ -47,30 +47,22 @@ async def one_second_coroutine():
         await asyncio.timer_elapsed.wait()
         D0.on()
         asyncio.timer_elapsed.clear()
-        dcf_clock.next_second()
+#         dcf_clock.next_second()
 
 asyncio.create_task(one_second_coroutine())
 
 #------------------------------------------------------------------------------
-# import DCF modules
-from DCF77.DCF77_device import DCF_device
-TONE_GPIO = const(7) # the GPIO where DCF signal is received by MCU
-dcf_clock = DCF_device(TONE_GPIO)
-asyncio.create_task(dcf_clock.dcf_decoder.DCF_signal_monitoring())
-asyncio.create_task(dcf_clock.dcf_decoder.frame_decoder())
-
-#------------------------------------------------------------------------------
 # import ntp modules
-from DCF77.NTP_device import *
+from NTP_clock.NTP_device import *
 CET = const(1)
-ntp_clock = NTP_device(time_zone=CET)
+ntp_device = NTP_device(time_zone=CET)
 
 #------------------------------------------------------------------------------
 # import and setup temperature and humidity device
 from lib_pico.dht_v2 import DHT11device
 DHT_PIN_IN = const(9)
 PERIOD = const(60)
-active_clock = None
+# active_clock = None
 dht11_device = DHT11device(DHT_PIN_IN, PERIOD)
 asyncio.create_task(dht11_device.async_measure())
 
@@ -87,117 +79,6 @@ def fwdbutton(wri, row, col, cls_screen, text='Next'):
            fgcolor = YELLOW, bgcolor = BLACK,
            text = text, shape = RECTANGLE)
     
-from DCF77.decoder_uGUIv1 import *   
-def time_status_rendering(dcf_device):
-    status = dcf_device.get_status()
-    state = status[0]
-    if state == SYNC:
-        blink = True
-        color = GREEN
-    elif state == SYNC_IN_PROGRESS:
-        blink = True
-        color = GREY
-    elif state == SYNC_FAILED:
-        blink = True
-        color = YELLOW
-    elif state == OUT_OF_SYNC:
-        blink = False
-        color = RED
-    else:
-        blink = True
-        color = WHITE
-    return (blink, color)
-
-
-#------------------------------------------------------------------------------
-class DCF_clock_screen(Screen):
-    def __init__(self):
-        super().__init__()
-        labels = {'bdcolor' : False,
-                  'fgcolor' : YELLOW,
-                  'bgcolor' : BLACK,
-                  'justify' : Label.CENTRE,
-          }
-        temp_colors = {'bdcolor' : False,
-                  'fgcolor' : WHITE,
-                  'bgcolor' : BLACK,
-                  'justify' : Label.CENTRE,
-          }
-        # verbose default indicates if fast rendering is enabled
-        wri         = CWriter(ssd, arial10, YELLOW, BLACK, verbose=False)  
-        wri_date    = CWriter(ssd, date_font, YELLOW, BLACK, verbose=False)  
-        wri_time    = CWriter(ssd, hours_font, YELLOW, BLACK, verbose=False)  
-        wri_seconds = CWriter(ssd, seconds_font, YELLOW, BLACK, verbose=False)  
-        wri_temp    = CWriter(ssd, seconds_font, YELLOW, BLACK, verbose=False)  
-        
-        gap = 4  # Vertical gap between widgets
-
-        self.lbl_title = Label(wri, 4, 2, 'DCF clock')
-        
-        fwdbutton(wri, 4, 90, NTP_clock_screen, text='NTP')
-        fwdbutton(wri, 4, 60, DCF_detail_screen, text='det')
-       
-        self.dial = Dial(wri, 20, 2, height = 35, ticks = 12, fgcolor = GREEN, pip = GREEN)
-        
-        col1 = 2 + self.dial.mcol + 3*gap
-        self.lbl_temperature = Label(wri_temp, 20, col1, 40, **temp_colors)
-        col2 = self.lbl_temperature.mcol
-        self.lbl_temp_unit = Label(wri, 20, col2, "c", **temp_colors)
-        row = self.lbl_temperature.mrow
-        self.lbl_humidity = Label(wri_temp, row, col1, 40, **temp_colors)
-        self.lbl_hum_unit = Label(wri, row, col2, "%", **temp_colors)
-        
-        row = self.dial.mrow + gap
-        self.lbl_date = Label(wri_date, row, 2, 124, **labels)
-        row = self.lbl_date.mrow + gap
-        self.lbl_tim = Label(wri_time, row, 2, '00:00', **labels)
-        self.led_status = LED(wri, row-gap, 105, height=10, bdcolor=False , fgcolor=False )
-        row += 12
-        self.lbl_sec = Label(wri_seconds, row, 100, '00', **labels)
-        
-        dht11_device.set_clock( dcf_clock)
-        
-        # setup async coroutines
-        self.reg_task(self.aclock_screen())
-
-    async def aclock_screen(self):
-        def uv(phi):
-            return rect(1, phi)
-        hrs = Pointer(self.dial)
-        mins = Pointer(self.dial)
-        secs = Pointer(self.dial)
-
-        hstart = 0 + 0.7j  # Pointer lengths. Will rotate relative to top.
-        mstart = 0 + 1j
-        sstart = 0 + 1j
-    
-        while True:
-            temperature  = dht11_device.get_temperature()
-            humidity = dht11_device.get_humidity()
-            self.lbl_temperature.value(f"{temperature:3.1f}")
-            self.lbl_humidity.value(f"{humidity:3.1f}")
-            t = dcf_clock.get_local_time()
-            blink, color = time_status_rendering(dcf_clock)
-            # Format
-            ## localtime : t[0]:year, t[1]:month, t[2]:mday, t[3]:hour, t[4]:minute, t[5]:second, t[6]:weekday, t[7]:time_zone, t[8]:time_is_valid
-            hrs.value(hstart * uv(-t[3] * pi/6 - t[4] * pi / 360), CYAN)
-            mins.value(mstart * uv(-t[4] * pi/30), CYAN)
-            secs.value(sstart * uv(-t[5] * pi/30), RED)
-            self.lbl_tim.value(f"{t[3]:02d}:{t[4]:02d}")
-            self.lbl_sec.value(f"{t[5]:02d}")
-            self.lbl_date.value(f"{days[t[6]-1]} {t[2]} {months[t[1]-1]}")
-            if blink == True:
-                if t[5]%2==0 : self.led_status(True)
-                else: self.led_status(False)
-                self.led_status.color(color)
-            else:
-                self.led_status(True)
-                self.led_status.color(color)
-            D3.off()
-            await asyncio.timer_elapsed.wait()
-            D3.on()
-            asyncio.timer_elapsed.clear()
-
 
 #------------------------------------------------------------------------------
 class NTP_clock_screen(Screen):
@@ -224,7 +105,7 @@ class NTP_clock_screen(Screen):
         
         self.lbl_title = Label(wri, 4, 2, 'NTP clock')
 
-        fwdbutton(wri, 4, 90, DCF_clock_screen, text='DCF')
+        fwdbutton(wri, 4, 70, NTP_data_screen, text='ntp data')
        
         self.dial = Dial(wri, 20, 2, height = 35, ticks = 12, fgcolor = GREEN, pip = GREEN)
         
@@ -244,14 +125,10 @@ class NTP_clock_screen(Screen):
         row += 12
         self.lbl_sec = Label(wri_seconds, row, 100, '00', **labels)
         
-        dht11_device.set_clock( ntp_clock)
+        dht11_device.set_clock( ntp_device)
 
         # setup async coroutines
         self.reg_task(self.aclock_screen())
-        
-        
-
-        
 
     async def aclock_screen(self):
         def uv(phi):
@@ -269,8 +146,7 @@ class NTP_clock_screen(Screen):
             humidity = dht11_device.get_humidity()
             self.lbl_temperature.value(f"{temperature:3.1f}")
             self.lbl_humidity.value(f"{humidity:3.1f}")
-            #------------ choice local RTC
-            t = ntp_clock.get_local_time()                        
+            t = ntp_device.get_local_time()                        
             # Format
             ## localtime : t[0]:year, t[1]:month, t[2]:mday, t[3]:hour, t[4]:minute, t[5]:second, t[6]:weekday, t[7]:time_zone, t[8]:time_is_valid
             hrs.value(hstart * uv(-t[3] * pi/6 - t[4] * pi / 360), CYAN)
@@ -289,7 +165,7 @@ class NTP_clock_screen(Screen):
             asyncio.timer_elapsed.clear()            
             
 #------------------------------------------------------------------------------
-class DCF_detail_screen(Screen):
+class NTP_data_screen(Screen):
     def __init__(self):
         super().__init__()
         labels = {'bdcolor' : False,
@@ -301,22 +177,28 @@ class DCF_detail_screen(Screen):
         wri = CWriter(ssd, arial10, YELLOW, BLACK, verbose=False)  # Report on fast mode. Or use verbose=False
         wri_time = CWriter(ssd, seconds_font, YELLOW, BLACK, verbose=False)  # Report on fast mode. Or use verbose=False
         gap = 4  # Vertical gap between widgets
-        fwdbutton(wri, 4, 80, DCF_clock_screen, text='DCF')
+
+        self.lbl_title = Label(wri, 4, 2, 'NTP data')
+
+        fwdbutton(wri, 4, 70, NTP_clock_screen, text='back')
+        
         row = 22
         self.lbl_date = Label(wri, row, 2, 120, **labels)
         row = self.lbl_date.mrow + gap
-        self.tb = Textbox(wri, row, 2, 120, 7) 
+        self.tb = Textbox(wri, row, 2, 120, 7)
+        self.tb.append(f"NTP server:\n  {ntp_device.addr[0]} : {ntp_device.addr[1]}")
+        self.tb.append(f"Stratum: {ntp_device.stratum}")
+        self.tb.append(f"poll_interval: {ntp_device.poll_interval} seconds")
+        self.tb.append(f"Precision: {ntp_device.precision} seconds")
+        self.tb.append(ntp_device.ref_identifier)
+
         self.reg_task(self.adetail_screen())
        
     async def adetail_screen(self):
         while True:
-            t = dcf_clock.get_local_time()
+            t = ntp_device.get_local_time()
             # localtime : t[0]:year, t[1]:month, t[2]:mday, t[3]:hour, t[4]:minute, t[5]:second, t[6]:weekday, t[7]:time_zone
-            self.lbl_date.value(f"{days[t[6]-1]} {t[2]:02d} {months[t[1]-1]} {t[0]-2000:02d} {t[3]:02d}:{t[4]:02d}")
-            status,ts_symbol,bit_rank,last_bit = dcf_clock.get_status()
-            if last_bit == None:
-                last_bit = "x"
-            self.tb.append(f"{ts_symbol:<11s} bit [{bit_rank:02d}]: {last_bit:1s}  s{t[5]:02d}")
+            self.lbl_date.value(f"{days[t[6]-1]} {t[2]:02d} {months[t[1]-1]} {t[3]:02d}:{t[4]:02d}:{t[5]:02d}")
 
             await asyncio.timer_elapsed.wait()
             asyncio.timer_elapsed.clear()
