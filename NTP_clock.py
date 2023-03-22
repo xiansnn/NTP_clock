@@ -17,14 +17,14 @@ import time
 #------------------------------------------------------------------------------
 # DEBUG logic analyser probe definitions
 from debug_utility.pulses import *
-# D0 = Probe(27) # one_second_coroutine or DHT11 pulses train
-# D1 = Probe(16) # DCF_Decoder._DCF_clock_IRQ_handler
-# D2 = Probe(17) # DCF_Decoder.frame_decoder
-# D3 = Probe(18) # DCF_clock_screen.aclock_screen
-# D4 = Probe(19) # _StatusController.signal_received
-# D5 = Probe(20) # _StatusController.signal_timeout
-# D6 = Probe(21) # time_status == SYNC
-# D7 = Probe(26) # -
+    # D0 = Probe(27) # wifi_connect & async_wifi_connect | DHT11 pulses train
+    # D1 = Probe(16) # wifi_connect>loop & async get_connection_status
+    # D2 = Probe(17) # 
+    # D3 = Probe(18) # NTP_clock_screen.aclock_screen
+    # D4 = Probe(19) # 
+    # D5 = Probe(20) # 
+    # D6 = Probe(21) # 
+    # D7 = Probe(26) # one_second_time_trigger
 
 
 #------------------------------------------------------------------------------
@@ -43,9 +43,9 @@ asyncio.timer_elapsed = asyncio.Event() # evolution possible du Screen : prendre
 # define coroutine that executes each second
 async def one_second_coroutine():
     while True:
-        D0.off()
+        D7.off()
         await asyncio.timer_elapsed.wait()
-        D0.on()
+        D7.on()
         asyncio.timer_elapsed.clear()
 #         dcf_clock.next_second()
 
@@ -178,9 +178,10 @@ class NTP_data_screen(Screen):
         wri_time = CWriter(ssd, seconds_font, YELLOW, BLACK, verbose=False)  # Report on fast mode. Or use verbose=False
         gap = 4  # Vertical gap between widgets
 
-        self.lbl_title = Label(wri, 4, 2, 'NTP data')
+        self.lbl_title = Label(wri, 4, 2, 'data')
 
-        fwdbutton(wri, 4, 70, NTP_clock_screen, text='back')
+        fwdbutton(wri, 4, 45, NTP_clock_screen, text='clock')
+        fwdbutton(wri, 4, 85, NTP_init_screen, text='wifi')
         
         row = 22
         self.lbl_date = Label(wri, row, 2, 120, **labels)
@@ -202,13 +203,87 @@ class NTP_data_screen(Screen):
 
             await asyncio.timer_elapsed.wait()
             asyncio.timer_elapsed.clear()
+
+
+#------------------------------------------------------------------------------
+RETRY_WLAN_CONNECT_STATUS = const(1) # in seconds
+
+class NTP_init_screen(Screen):
+    def __init__(self):
+        super().__init__()
+        labels = {'bdcolor' : False,
+                  'fgcolor' : YELLOW,
+                  'bgcolor' : DARKBLUE,
+                  'justify' : Label.CENTRE,
+          }
+
+        wri = CWriter(ssd, arial10, YELLOW, BLACK, verbose=False)  # Report on fast mode. Or use verbose=False
+        wri_time = CWriter(ssd, seconds_font, YELLOW, BLACK, verbose=False)  # Report on fast mode. Or use verbose=False
+        gap = 4  # Vertical gap between widgets
+
+        self.lbl_title = Label(wri, 4, 2, 'NTP init')
+
+        fwdbutton(wri, 4, 45, NTP_clock_screen, text='clock')
+        fwdbutton(wri, 4, 85, NTP_data_screen, text='data')
+        
+        row = 22
+        self.lbl_date = Label(wri, row, 2, 120, **labels)
+        row = self.lbl_date.mrow + gap
+        self.tb = Textbox(wri, row, 2, 120, 7)
+
+        self.reg_task(self.as_init_screen())
+        
+        
+    async def as_init_screen(self):   
+        # async wifi connect and set time
+        if not ntp_device.time_is_valid():
+#             async_wifi_connect()
+            wlan.disconnect()
+            wlan.connect(SSID, PASSWORD)
+            for n in range(10):
+                D4.on()
+#                 status = uasyncio.run(get_connection_status())
+                status = wlan.status()
+                text = explain_wlan_status(status)
+                self.tb.append(text)
+                D4.off()
+                if status == network.STAT_GOT_IP:
+#                     wlan_config = wlan.ifconfig()
+#                     self.tb.append( f"my_ip =  {wlan_config[0]}" )
+                    ntp_device.set_time_validity(True)
+                    if ntp_device.set_ntp_time():
+                        t = ntp_device.get_local_time()            
+                    break
+                await uasyncio.sleep(RETRY_WLAN_CONNECT_STATUS)
+            t = ntp_device.get_local_time()
+            # localtime : t[0]:year, t[1]:month, t[2]:mday, t[3]:hour, t[4]:minute, t[5]:second, t[6]:weekday, t[7]:time_zone
+            self.lbl_date.value(f"{days[t[6]-1]} {t[2]:02d} {months[t[1]-1]} {t[3]:02d}:{t[4]:02d}:{t[5]:02d}")
+            await uasyncio.sleep(5)
+            Screen.change(NTP_clock_screen)
+        
+        self.reg_task(self.as_init_periodic_screen())
+       
+        
+    
+    
+    
+    async def as_init_periodic_screen(self):
+        wlan_config = wlan.ifconfig()
+        self.tb.append( f"SSID  =  {SSID}" )
+        self.tb.append( f"my_ip =  {wlan_config[0]}" )
+        while True:
+            t = ntp_device.get_local_time()
+            # localtime : t[0]:year, t[1]:month, t[2]:mday, t[3]:hour, t[4]:minute, t[5]:second, t[6]:weekday, t[7]:time_zone
+            self.lbl_date.value(f"{days[t[6]-1]} {t[2]:02d} {months[t[1]-1]} {t[3]:02d}:{t[4]:02d}:{t[5]:02d}")
+            await asyncio.timer_elapsed.wait()
+            asyncio.timer_elapsed.clear()
     
 
 
 #----------------- main program --------------------------
 
 if __name__ == "__main__":
-    Screen.change(NTP_clock_screen)
+    Screen.change(NTP_init_screen)
 
 
 

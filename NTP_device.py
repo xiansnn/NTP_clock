@@ -101,41 +101,53 @@ CET_OFFSET = 1 # Central European Time
 CEST_OFFSET = 2 # Central European Summer Time
 DATAGRAM_SIZE = const(48)
 NTP_UDP_PORT = const(123)
-
-
-
-
-
-
+SERVER_REPLY_TIMOUT = const(1) # in seconds
 
 class NTP_device():
     def __init__(self, time_zone=CET_OFFSET):
         self.time_zone = time_zone
         self.rtc = RTC()
-        self.time_validity = wifi_connect()
-        current_utc_timestamp = self.get_ntp_time()
-        if current_utc_timestamp is not None:
-            local_time = time.localtime(current_utc_timestamp)
-        else:
-            self.time_validity = False
-        # time.localtime = ([0]year, [1]month, [2]mday, [3]hour, [4]minute, [5]second, [6]weekday, [7]yearday)
-        # RTC.datetime = ([0]year, [1]month, [2]day, [3]weekday, [4]hours, [5]minutes, [6]seconds, [7]subseconds)
-        self.rtc.datetime((local_time[0], local_time[1], local_time[2], local_time[6], local_time[3], local_time[4], local_time[5], 0))
+        self._time_validity = False
 
-    def get_ntp_time(self, era_offset=TIME_STAMP_UNIX, host="fr.pool.ntp.org"):
+    def get_time_validity(self):
+        return self._time_validity
+    
+    def set_time_validity(self, bool_value):
+        self._time_validity = bool_value
+
+    def get_local_time(self, async_mode=False):
+        """ gives time compliant with format expected by clock GUI.
+        Unifyed format between ntp, RTC and DCF77"""
+        if not self._time_validity:
+            if async_mode:
+                self._time_validity = async_wifi_connect()
+            else:
+                self._time_validity = wifi_connect()
+            self.set_ntp_time()
+        t_RTC = time.gmtime()                
+        t = list(t_RTC)
+        t[3] += self.time_zone
+        t[6] += 1
+        t[7] = self.time_zone
+        t.append(self._time_validity)
+        # t Format:
+        ## common_format : t[0]:year, t[1]:month, t[2]:mday, t[3]:hour, t[4]:minute, t[5]:second, t[6]:weekday, t[7]:time_zone, t[8]=time_validity
+        return t
+
+    def set_ntp_time(self, era_offset=TIME_STAMP_UNIX, host="fr.pool.ntp.org"):
         NTP_QUERY = bytearray(DATAGRAM_SIZE)
         NTP_QUERY[0] = (SNTP_VERSION << 3 ) | CLIENT_MODE
         self.addr = socket.getaddrinfo(host, NTP_UDP_PORT)[0][-1]
         s = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
         try:
-            s.settimeout(1)
+            s.settimeout(SERVER_REPLY_TIMOUT)
             res = s.sendto(NTP_QUERY, self.addr)
             msg = s.recv(DATAGRAM_SIZE)
             self.Leap_Indicator = (msg[0] & 0xC0) >> 6
             self.mode  = msg[0] & 7
             if (self.Leap_Indicator == CLOCK_OUT_OF_SYNC) or (self.mode != SERVER_MODE) :
                 return None
-            self.Version = (msg[0] & 0x38) >> 3
+            self.version = (msg[0] & 0x38) >> 3
             self.stratum = msg[1]
             poll_exponent = unpack("!b",msg[2:3])[0]
             self.poll_interval = 2** poll_exponent
@@ -154,10 +166,17 @@ class NTP_device():
             self.origine_timestamp = unpack("!II",msg[24:32])
             self.receive_timestamp =  unpack("!II",msg[32:40])
             self.transmit_timestamp = unpack("!II",msg[40:48])
+            
+            current_utc_timestamp = self.transmit_timestamp[0] - era_offset
+            gmt = time.gmtime(current_utc_timestamp)
+# time.localtime = ([0]year, [1]month, [2]mday, [3]hour,    [4]minute, [5]second,  [6]weekday, [7]yearday)
+# RTC.datetime   = ([0]year, [1]month, [2]day,  [3]weekday, [4]hours,  [5]minutes, [6]seconds, [7]subseconds)
+            self.rtc.datetime((gmt[0], gmt[1], gmt[2], gmt[6], gmt[3], gmt[4], gmt[5], 0))
+
             if __name__ == "__main__":
                 print(f"NTP server host_addr:{self.addr}")
                 print(f"LI: {self.Leap_Indicator}")
-                print(f"VN:{self.Version}")
+                print(f"VN:{self.version}")
                 print(f"Mode: {self.mode}")
                 print(f"Stratum: {self.stratum}")
                 print(f"poll_interval: {self.poll_interval} seconds")
@@ -169,63 +188,47 @@ class NTP_device():
                 print(f"Origine TS: {self.origine_timestamp[0]}.{self.origine_timestamp[1]} seconds")
                 print(f"Receive TS: {self.receive_timestamp[0]}.{self.receive_timestamp[1]} seconds")
                 print(f"Transmit TS: {self.transmit_timestamp[0]}.{self.transmit_timestamp[1]} seconds")
-           
-        finally:
-            pass
-    #         s.close()
-        current_utc_timestamp = self.transmit_timestamp[0] - era_offset
-        return current_utc_timestamp
+            
+            s.close()
+            return True 
+        except:
+            print("time out reply")
+            s.close()
+            return False
 
+            
     
-    def next_second(self):
-        pass
-#         self.local_time.next_second()            
-        
-    def get_local_time(self):
-        t_RTC = time.localtime()                
-        t = list(t_RTC)
-        t[3] += self.time_zone
-        t[6] += 1
-        t[7] = self.time_zone
-        t.append(self.time_validity)
-        # Format:
-        ## localtime : t[0]:year, t[1]:month, t[2]:mday, t[3]:hour, t[4]:minute, t[5]:second, t[6]:weekday, t[7]:time_zone, t[8]=time_validity
-        return t
-    
-    def get_status(self):
-        return self.time_validity
 
 if __name__ == "__main__":
     from debug_utility.pulses import *    
-    # D0 = Probe(26) # -- time_trigger  
-    # D1 = Probe(16) # DCF_Decoder._DCF_clock_IRQ_handler
-    # D2 = Probe(17) # DCF_Decoder.frame_decoder
+    # D0 = Probe(27) # wifi_connect / async_wifi_connect
+    # D1 = Probe(16) # wifi_connect>loop / async get_connection_status
+    # D2 = Probe(17) # 
     # D3 = Probe(18) # 
-    # D4 = Probe(19) # _StatusController.signal_received
-    # D5 = Probe(20) # _StatusController.signal_timeout
-    # D6 = Probe(21) # -- time_status == SYNC
-    # D7 = Probe(27) #
+    # D4 = Probe(19) # 
+    # D5 = Probe(20) # 
+    # D6 = Probe(21) # 
+    # D7 = Probe(26) # one_second_time_trigger
     
     #--------------------------------------------------------------------------    
-    ntp = NTP_device()    
+    ntp = NTP_device()
     
     #--------------------------------------------------------------------------    
     def timer_IRQ(timer):
         one_second_time_event.set()
 
-    async def time_trigger():
+    async def one_second_time_trigger():
         while True:
-            D0.off()
+            D7.off()
             await one_second_time_event.wait()
-            D0.on()
+            D7.on()
             one_second_time_event.clear()
-            ntp.next_second()
-            print("\t", ntp.get_local_time())
-            print(ntp.get_status())
+            print(f"local time: {ntp.get_local_time()}")
+
 
     Timer(mode=Timer.PERIODIC, freq=1, callback=timer_IRQ)
     one_second_time_event = asyncio.ThreadSafeFlag()
-    asyncio.create_task(time_trigger())      
+    asyncio.create_task(one_second_time_trigger())      
     scheduler = asyncio.get_event_loop()
     scheduler.run_forever()
 
