@@ -189,11 +189,6 @@ class DHT_data_screen(Screen):
         self.lbl_date = Label(wri, row, 2, 120, **labels)
         row = self.lbl_date.mrow + gap
         self.tb = Textbox(wri, row, 2, 120, 7, active=True)
-#         self.tb.append(f"NTP server:\n  {ntp_device.addr[0]} : {ntp_device.addr[1]}")
-#         self.tb.append(f"Stratum: {ntp_device.stratum}")
-#         self.tb.append(f"poll_interval: {ntp_device.poll_interval} seconds")
-#         self.tb.append(f"Precision: {ntp_device.precision} seconds")
-#         self.tb.append(ntp_device.ref_identifier)
 
         self.reg_task(self.adetail_screen())
         self.last_record = 0
@@ -212,80 +207,6 @@ class DHT_data_screen(Screen):
             await asyncio.timer_elapsed.wait()
             asyncio.timer_elapsed.clear()
 
-
-#------------------------------------------------------------------------------
-# RETRY_WLAN_CONNECT_STATUS = const(1) # in seconds
-# 
-# class NTP_init_screen(Screen):
-#     def __init__(self):
-#         super().__init__()
-#         labels = {'bdcolor' : False,
-#                   'fgcolor' : YELLOW,
-#                   'bgcolor' : DARKBLUE,
-#                   'justify' : Label.CENTRE,
-#           }
-# 
-#         wri = CWriter(ssd, arial10, YELLOW, BLACK, verbose=False)  # Report on fast mode. Or use verbose=False
-#         wri_time = CWriter(ssd, seconds_font, YELLOW, BLACK, verbose=False)  # Report on fast mode. Or use verbose=False
-#         gap = 4  # Vertical gap between widgets
-# 
-#         self.lbl_title = Label(wri, 4, 2, 'NTP init')
-# 
-#         fwdbutton(wri, 4, 45, NTP_clock_screen, text='clock')
-#         fwdbutton(wri, 4, 85, NTP_data_screen, text='data')
-#         
-#         row = 22
-#         self.lbl_date = Label(wri, row, 2, 120, **labels)
-#         row = self.lbl_date.mrow + gap
-#         self.tb = Textbox(wri, row, 2, 120, 7)
-# 
-#         self.reg_task(self.as_init_screen())
-#         
-#         
-#     async def as_init_screen(self):   
-#         # async wifi connect and set time
-#         if not ntp_device.time_is_valid():
-# #             async_wifi_connect()
-#             wlan.disconnect()
-#             wlan.connect(SSID, PASSWORD)
-#             for n in range(10):
-#                 D4.on()
-# #                 status = uasyncio.run(get_connection_status())
-#                 status = wlan.status()
-#                 text = explain_wlan_status(status)
-#                 self.tb.append(text)
-#                 D4.off()
-#                 if status == network.STAT_GOT_IP:
-# #                     wlan_config = wlan.ifconfig()
-# #                     self.tb.append( f"my_ip =  {wlan_config[0]}" )
-#                     ntp_device.set_time_validity(True)
-#                     if ntp_device.set_ntp_time():
-#                         t = ntp_device.get_local_time()            
-#                     break
-#                 await uasyncio.sleep(RETRY_WLAN_CONNECT_STATUS)
-#             t = ntp_device.get_local_time()
-#             # localtime : t[0]:year, t[1]:month, t[2]:mday, t[3]:hour, t[4]:minute, t[5]:second, t[6]:weekday, t[7]:time_zone
-#             self.lbl_date.value(f"{days[t[6]-1]} {t[2]:02d} {months[t[1]-1]} {t[3]:02d}:{t[4]:02d}:{t[5]:02d}")
-#             await uasyncio.sleep(5)
-#             Screen.change(NTP_clock_screen)
-#         
-#         self.reg_task(self.as_init_periodic_screen())
-#        
-#         
-#     
-#     
-#     
-#     async def as_init_periodic_screen(self):
-#         wlan_config = wlan.ifconfig()
-#         self.tb.append( f"SSID  =  {SSID}" )
-#         self.tb.append( f"my_ip =  {wlan_config[0]}" )
-#         while True:
-#             t = ntp_device.get_local_time()
-#             # localtime : t[0]:year, t[1]:month, t[2]:mday, t[3]:hour, t[4]:minute, t[5]:second, t[6]:weekday, t[7]:time_zone
-#             self.lbl_date.value(f"{days[t[6]-1]} {t[2]:02d} {months[t[1]-1]} {t[3]:02d}:{t[4]:02d}:{t[5]:02d}")
-#             await asyncio.timer_elapsed.wait()
-#             asyncio.timer_elapsed.clear()
-#     
 
 
 #----------------- main program --------------------------
