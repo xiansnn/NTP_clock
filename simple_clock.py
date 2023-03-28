@@ -53,10 +53,10 @@ asyncio.create_task(one_second_coroutine())
 
 #------------------------------------------------------------------------------
 # import ntp modules
-from lib_pico.NTP_client import *
+from lib_pico.NTP_device import *
 CET = const(1)
-ntp_client = NTP_client()
-print(ntp_client.get_local_time())
+CEST = const(2)
+ntp_device = NTPdevice(time_zone=CEST)
 
 #------------------------------------------------------------------------------
 # import and setup temperature and humidity device
@@ -66,7 +66,7 @@ PERIOD = const(60)
 # active_clock = None
 dht11_device = DHT11device(DHT_PIN_IN, PERIOD)
 asyncio.create_task(dht11_device.async_measure())
-dht11_device.set_clock( ntp_client)
+dht11_device.set_clock( ntp_device)
 #-------------------------- DCF77 GUI --------------------------------------
 # conversions table for Calendar
 days   = ('LUN', 'MAR', 'MER', 'JEU', 'VEN', 'SAM', 'DIM')
@@ -146,10 +146,7 @@ class MainClockScreen(Screen):
             humidity = dht11_device.get_humidity()
             self.lbl_temperature.value(f"{temperature:3.1f}")
             self.lbl_humidity.value(f"{humidity:3.1f}")
-#             t = time.gmtime()
-            t = ntp_client.get_local_time()
-            # time.gmtime Format
-            ##                 t[0]:year, t[1]:month, t[2]:mday, t[3]:hour, t[4]:minute, t[5]:second, t[6]:weekday, t[7]:yearday
+            t = ntp_device.get_local_time()
             ## common_format : t[0]:year, t[1]:month, t[2]:mday, t[3]:hour, t[4]:minute, t[5]:second, t[6]:weekday, t[7]:time_zone, t[8]=time_validity
             hrs.value(hstart * uv(-t[3] * pi/6 - t[4] * pi / 360), CYAN)
             mins.value(mstart * uv(-t[4] * pi/30), CYAN)
@@ -195,9 +192,10 @@ class DHT_data_screen(Screen):
        
     async def adetail_screen(self):
         while True:
-            t = time.gmtime()
+#             t = time.gmtime()
+            t = ntp_device.get_local_time()
 
-            self.lbl_date.value(f"{t[0]:4d}-{t[1]:02d}-{t[2]:02d} {t[3]:02d}:{t[4]:02d}:{t[5]:02d} GMT")
+            self.lbl_date.value(f"{t[0]:4d}-{t[1]:02d}-{t[2]:02d} {t[3]:02d}:{t[4]:02d}:{t[5]:02d}")
             temperature  = dht11_device.get_temperature()
             humidity = dht11_device.get_humidity()
             if t[4]!=self.last_record:
@@ -207,12 +205,79 @@ class DHT_data_screen(Screen):
             await asyncio.timer_elapsed.wait()
             asyncio.timer_elapsed.clear()
 
+class NTP_server_screen(Screen):
+    def __init__(self):
+        super().__init__()
+        labels = {'bdcolor' : False,
+                  'fgcolor' : YELLOW,
+                  'bgcolor' : DARKBLUE,
+                  'justify' : Label.CENTRE,
+          }
+
+        wri = CWriter(ssd, arial10, YELLOW, BLACK, verbose=False)  # Report on fast mode. Or use verbose=False
+        wri_time = CWriter(ssd, seconds_font, YELLOW, BLACK, verbose=False)  # Report on fast mode. Or use verbose=False
+        gap = 4  # Vertical gap between widgets
+
+        self.lbl_title = Label(wri, 4, 2, 'NTP')
+
+        fwdbutton(wri, 4, 45, MainClockScreen, text='clock')
+#         fwdbutton(wri, 4, 85, NTP_init_screen, text='wifi')
+        
+        row = 22
+        self.lbl_date = Label(wri, row, 2, 120, **labels)
+        row = self.lbl_date.mrow + gap
+        self.tb = Textbox(wri, row, 2, 120, 7, active=True)
+        
+        from lib_pico.wifi_device import WiFiDevice
+        self.wifi_device = WiFiDevice()
+        self.last_record = 0
+        self.reg_task(self.periodic_ntp_screen())
+
+       
+    async def periodic_ntp_screen(self): 
+        self.wifi_device.wifi_connect()
+        D3.on()
+        max_wait = MAX_GET_STATUS_RETRY
+        while max_wait > 0:
+            D2.on()
+            status = self.wifi_device.get_status()
+            if status == network.STAT_CONNECTING:
+                self.tb.append(f"status[{status}] #[{max_wait:02d}]")
+                max_wait -= 1
+                D2.off()
+                await uasyncio.sleep(RETRY_GET_WLAN_CONNECT_STATUS)
+            else:
+                self.tb.append(f"status[{status}]")
+                D2.off()
+                break
+            D2.off()
+        if max_wait == 0:
+            self.wifi_device.set_status(network.STAT_CONNECT_FAIL)
+        ntp_time,frame,server = get_ntp_time(ntp_device.time_zone)
+        t = ntp_device.get_local_time()
+        self.lbl_date.value(f"{t[0]:4d}-{t[1]:02d}-{t[2]:02d} {t[3]:02d}:{t[4]:02d}:{t[5]:02d}")
+        self.tb.append(f"{server}")
+        await uasyncio.sleep(5)
+        Screen.change(MainClockScreen)
+        D3.off()
+
+        
+#         
+#         
+#         while True:
+# #             t = time.gmtime()
+# 
+#             self.tb.append("wait connection")
+#             await asyncio.timer_elapsed.wait()
+#             asyncio.timer_elapsed.clear()
+
 
 
 #----------------- main program --------------------------
 
 if __name__ == "__main__":
-    Screen.change(MainClockScreen)
+#     Screen.change(MainClockScreen)
+    Screen.change(NTP_server_screen)
 
 
 
