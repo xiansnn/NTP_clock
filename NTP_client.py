@@ -14,33 +14,30 @@ import select
 from utime import gmtime
 from machine import RTC
 
-
+HOST_DOMAIN = const("fr.pool.ntp.org")
 CLIENT_MODE = const(3)
 SERVER_MODE = const(4)
 SNTP_VERSION = const(4)
 CLOCK_OUT_OF_SYNC = const(3)
-CET_OFFSET = 1 # Central European Time
-CEST_OFFSET = 2 # Central European Summer Time
 DGRAM_SIZE = const(48)
-NTP_UDP_PORT = const(123)
 SERVER_REPLY_TIMOUT = const(1) # in seconds
 
 # (date(2000, 1, 1) - date(1900, 1, 1)).days * 24*60*60
 # (date(1970, 1, 1) - date(1900, 1, 1)).days * 24*60*60
 TIME_STAMP_UNIX = const(2208988800) # first day for UNIX epoch 1970-01-01 00:00
-NTP_DELTA = 3155673600 if gmtime(0)[0] == 2000 else TIME_STAMP_UNIX
+TIME_STAMP_2000 = const(3155673600)
+NTP_DELTA = TIME_STAMP_2000 if gmtime(0)[0] == 2000 else TIME_STAMP_UNIX
 
 
-# The NTP host can be configured at runtime by doing: ntptime.host = 'myhost.org'
-host = "fr.pool.ntp.org"
+
 
 def get_ntp_time(hrs_offset=0):  # Local time offset in hrs relative to UTC
     NTP_QUERY = bytearray(DGRAM_SIZE)
-#     NTP_QUERY[0] = 0x1B
     NTP_QUERY[0] = (SNTP_VERSION << 3 ) | CLIENT_MODE
     try:
-        addr = socket.getaddrinfo(host, 123)[0][-1]
-        print(addr)
+        addr = socket.getaddrinfo(HOST_DOMAIN, 123)[0][-1]
+        ntp_server = NTPserver(HOST_DOMAIN)
+        ntp_server.ip_address , ntp_server.ip_port = addr
     except OSError:
         return 0
     s = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
@@ -52,7 +49,7 @@ def get_ntp_time(hrs_offset=0):  # Local time offset in hrs relative to UTC
             msg = s.recv(48)
             frame = NTPframe(msg)
             val = struct.unpack("!I", msg[40:44])[0]  # Can return 0
-            return (max(val - NTP_DELTA + hrs_offset * 3600, 0),frame)
+            return (max(val - NTP_DELTA + hrs_offset * 3600, 0),frame, ntp_server)
     except OSError:
         pass  # LAN error
     finally:
@@ -63,7 +60,7 @@ def get_ntp_time(hrs_offset=0):  # Local time offset in hrs relative to UTC
 # There's currently no timezone support in MicroPython, and the RTC is set in UTC time.
 def settime(t):
     tm = gmtime(t)
-    RTC().datetime((tm[0], tm[1], tm[2], tm[6] + 1, tm[3], tm[4], tm[5], 0))
+    RTC().datetime((tm[0], tm[1], tm[2], tm[6], tm[3], tm[4], tm[5], 0))
     
 def convert_ts_to_time(bin_ts):
     ts = struct.unpack("!II",bin_ts)
@@ -85,7 +82,20 @@ def repr_gmtime(tm):
     return f"{tm[0]:4d}-{tm[1]:02d}-{tm[2]:02d} {tm[3]:02d}:{tm[4]:02d}:{tm[5]:02d} wday:{tm[6]} yday:{tm[7]:03d}"
 def repr_RTCdatetime(rtc):
     return f"{rtc[0]:4d}-{rtc[1]:02d}-{rtc[2]:02d} {rtc[4]:02d}:{rtc[5]:02d}:{rtc[6]:02d} wday:{rtc[3]} subsec:{rtc[7]}"
-    
+
+
+class NTPserver():
+    def __init__(self, host="fr.pool.ntp.org"):
+        self.host = host
+        self.ip_address = ""
+        self.ip_port = 0
+    def __repr__(self):
+        s = "NTP server:"
+        s += (f"\n\thost name      {self.host}")
+        s += (f"\n\thost ip@:port  {self.ip_address}:{self.ip_port}")
+        return s
+
+
 class NTPframe():
     def __init__(self, msg):
         self.is_valid = True
@@ -116,7 +126,7 @@ class NTPframe():
     
     def __repr__(self):
         s = "NTP frame:\n"
-        s += (f"\tLI:{self.Leap_Indicator} | VN:{self.version} | Mode:{self.mode} | Stratum:{self.stratum} | poll_interval:{self.poll_interval} sec | Precision:{self.precision} sec")
+        s += (f"\tLI:{self.Leap_Indicator} | VN:{self.version} | Mode:{self.mode} | Stratum: {self.stratum} | poll_interval: {self.poll_interval} sec | Precision: {self.precision} sec")
         s += (f"\n\tRoot delay:         {self.root_delay[0]}.{self.root_delay[1]} sec")
         s += (f"\n\tRoot dispersion:    {self.root_dispersion[0]}.{self.root_dispersion[1]} sec")
         s += (f"\n\t{self.ref_identifier}")
@@ -130,7 +140,94 @@ class NTPframe():
 
 ###############################################################################
 if __name__ == "__main__":
+    
     """
+    RFC 4330 extract
+    datagram format:
+                           1                   2                   3
+       0 1 2 3 4 5 6 7 8 9 0 1 2 3 4 5 6 7 8 9 0 1 2 3 4 5 6 7 8 9 0 1
+      +-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+
+      |LI | VN  |Mode |    Stratum    |     Poll      |   Precision    |
+      +-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+
+      |                          Root  Delay                           |
+      +-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+
+      |                       Root  Dispersion                         |
+      +-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+
+      |                     Reference Identifier                       |
+      +-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+
+      |                                                                |
+      |                    Reference Timestamp (64)                    |
+      |                                                                |
+      +-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+
+      |                                                                |
+      |                    Originate Timestamp (64)                    |
+      |                                                                |
+      +-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+
+      |                                                                |
+      |                     Receive Timestamp (64)                     |
+      |                                                                |
+      +-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+
+      |                                                                |
+      |                     Transmit Timestamp (64)                    |
+      |                                                                |
+      +-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+
+      |                 Key Identifier (optional) (32)                 |
+      +-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+
+      |                                                                |
+      |                                                                |
+      |                 Message Digest (optional) (128)                |
+      |                                                                |
+      |                                                                |
+      +-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+
+
+LI: Leap Indicator  Meaning
+      ---------------------------------------------
+      0        no warning
+      1        last minute has 61 seconds
+      2        last minute has 59 seconds
+      3        alarm condition (clock not synchronized)
+      
+Mode           Meaning
+      ------------------------------------
+      0        reserved
+      1        symmetric active
+      2        symmetric passive
+      3        client
+      4        server
+      5        broadcast
+      6        reserved for NTP control message
+      7        reserved for private use
+      
+Stratum        Meaning
+      ----------------------------------------------
+      0        kiss-o'-death message (see below)
+      1        primary reference (e.g., synchronized by radio clock)
+      2-15     secondary reference (synchronized by NTP or SNTP)
+      16-255   reserved
+      
+Code             External Reference Source
+      ------------------------------------------------------------------
+      LOCL       uncalibrated local clock
+      CESM       calibrated Cesium clock
+      RBDM       calibrated Rubidium clock
+      PPS        calibrated quartz clock or other pulse-per-second
+                 source
+      IRIG       Inter-Range Instrumentation Group
+      ACTS       NIST telephone modem service
+      USNO       USNO telephone modem service
+      PTB        PTB (Germany) telephone modem service
+      TDF        Allouis (France) Radio 164 kHz
+      DCF        Mainflingen (Germany) Radio 77.5 kHz
+      MSF        Rugby (UK) Radio 60 kHz
+      WWV        Ft. Collins (US) Radio 2.5, 5, 10, 15, 20 MHz
+      WWVB       Boulder (US) Radio 60 kHz
+      WWVH       Kauai Hawaii (US) Radio 2.5, 5, 10, 15 MHz
+      CHU        Ottawa (Canada) Radio 3330, 7335, 14670 kHz
+      LORC       LORAN-C radionavigation system
+      OMEG       OMEGA radionavigation system
+      GPS        Global Positioning Service
+
+
     RTC().datetime()  format :
 [0] 'rtc_year'      format yyyy
 [1] 'rtc_mon'       range [1 ... 12]
@@ -150,6 +247,7 @@ if __name__ == "__main__":
 [5] 'tm_sec'       range [0 ... 61] 
 [6] 'tm_wday'      range [0 ... 6] Monday is 0
 [7] 'tm_yday'      range [1 ... 366]
+    
     """
    
     GMT_OFFSET = const(0)  # UTC+0
@@ -157,19 +255,19 @@ if __name__ == "__main__":
     CEST_OFFSET = const(2) # UTC+2 Central European Summer Time
     
     import network
-    from wifi_data import *
+    from lib_pico.wifi_device import WiFiDevice
     if not network.WLAN().isconnected():
-        from wifi_data import *
-        wlan = network.WLAN(network.STA_IF)
-        wlan.active(True)
-        wlan.connect(SSID, PASSWORD)
-        print(wlan.ifconfig())
-    ntp_time , frame = get_ntp_time(CEST_OFFSET)
+        wifi_device = WiFiDevice()
+        wifi_device.wifi_connect()
+        wifi_device.blocking_wait_connection()
+        print(wifi_device)
+    ntp_time , frame, server = get_ntp_time(CEST_OFFSET)
     tm = gmtime(ntp_time)
     machine.RTC().datetime((tm[0], tm[1], tm[2], tm[6], tm[3], tm[4], tm[5], 0))
     rtc = machine.RTC().datetime()
 
-    print(frame)    
+    print(server)
+    print(frame)
     print(repr_gmtime(tm))
     print(repr_RTCdatetime(rtc))
     
